@@ -83,11 +83,104 @@ def normalize_sffv2_palette(palette):
         return normalized
     return list(palette[:768])  # 768バイト（256色×3）に制限
 
+def decode_pcx_rle(pcx_data):
+    """PCXのRLE圧縮を手動でデコードする"""
+    try:
+        # PCXヘッダー解析（128バイト）
+        if len(pcx_data) < 128:
+            return None, None, None, None
+            
+        manufacturer = pcx_data[0]
+        version = pcx_data[1]
+        encoding = pcx_data[2]
+        bits_per_pixel = pcx_data[3]
+        xmin, ymin, xmax, ymax = struct.unpack('<HHHH', pcx_data[4:12])
+        bytes_per_line = struct.unpack('<H', pcx_data[66:68])[0]
+        num_planes = pcx_data[65]
+        
+        width = xmax - xmin + 1
+        height = ymax - ymin + 1
+        
+        # RLE圧縮データの開始位置
+        data_start = 128
+        
+        # デコードされた画像データ
+        decoded_data = []
+        data_pos = data_start
+        
+        for y in range(height):
+            line_data = []
+            for plane in range(num_planes):
+                x = 0
+                while x < bytes_per_line:
+                    if data_pos >= len(pcx_data):
+                        # データが足りない場合は0で埋める
+                        while x < bytes_per_line:
+                            line_data.append(0)
+                            x += 1
+                        break
+                        
+                    byte = pcx_data[data_pos]
+                    data_pos += 1
+                    
+                    # RLE圧縮チェック（上位2ビットが11の場合）
+                    if (byte & 0xC0) == 0xC0:
+                        # 繰り返し回数を取得（下位6ビット）
+                        count = byte & 0x3F
+                        if data_pos >= len(pcx_data):
+                            # データが足りない場合は0で埋める
+                            for _ in range(count):
+                                if x < bytes_per_line:
+                                    line_data.append(0)
+                                    x += 1
+                            break
+                        value = pcx_data[data_pos]
+                        data_pos += 1
+                        for _ in range(count):
+                            if x < bytes_per_line:
+                                line_data.append(value)
+                                x += 1
+                    else:
+                        # 非圧縮データ
+                        if x < bytes_per_line:
+                            line_data.append(byte)
+                            x += 1
+            
+            # 1プレーンの場合（インデックスカラー）
+            if num_planes == 1:
+                decoded_data.extend(line_data[:width])
+            else:
+                # 複数プレーンの場合（RGBなど）
+                decoded_data.extend(line_data)
+        
+        return bytes(decoded_data), width, height, num_planes
+        
+    except Exception as e:
+        logging.error(f"PCX RLEデコードエラー: {e}")
+        return None, None, None, None
+
 def convert_pcx_to_image(pcx_data, palette_data=None):
     try:
-        img = Image.open(BytesIO(pcx_data))
-        img.load()
-        img = img.convert("P")
+        # まず手動デコードを試みる
+        decoded_data, width, height, num_planes = decode_pcx_rle(pcx_data)
+        
+        if decoded_data and width and height:
+            # デコード成功 - PIL画像を作成
+            if num_planes == 1:
+                # インデックスカラー（パレットモード）
+                img = Image.frombytes('P', (width, height), decoded_data)
+                logging.info(f"手動PCXデコード成功: {width}x{height}, パレットモード")
+            else:
+                # RGBモード（通常は使用されない）
+                img = Image.frombytes('RGB', (width, height), decoded_data)
+                img = img.convert('P')
+                logging.info(f"手動PCXデコード成功: {width}x{height}, RGBモード")
+        else:
+            # 手動デコード失敗 - PILのデコーダーを使用
+            img = Image.open(BytesIO(pcx_data))
+            img.load()
+            img = img.convert("P")
+            logging.info("PIL PCXデコード成功")
 
         extracted_palette = extract_palette_from_pcx_data(pcx_data)
         final_palette = palette_data or extracted_palette
