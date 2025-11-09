@@ -6930,12 +6930,19 @@ def main():
     """メイン関数"""
     import argparse
     from PyQt5.QtWidgets import QApplication
-    
+    from src.log import setup_logging, get_logger
+
     parser = argparse.ArgumentParser(description='SffCharaViewer - SFF/AIR file viewer')
     parser.add_argument('file', nargs='?', help='SFF or DEF file to open')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     parser.add_argument('--scale', type=float, default=2.0, help='Default scale factor')
+    parser.add_argument('--log-level', type=str, default='INFO', help='Log level')
     args = parser.parse_args()
+    
+    setup_logging(args.log_level)
+    logger = get_logger(__name__)
+    
+    logger.info("main関数開始")
     
     app = QApplication(sys.argv)
     
